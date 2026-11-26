@@ -7,6 +7,7 @@ _me=$(basename "$0")
 _CFG=""
 _CMD=""
 _FORCE=false
+_IS_DYNAMIC_PACKAGE=0
 
 #--------------------------------------------------------
 _CLR_RED="\033[0;31m"   #'0;31' is Red's ANSI color code
@@ -157,30 +158,35 @@ createCACMSCluster() {
   log_info "Create CACMS cluster"
 
   #----------------
-  oc delete casclusters.cas.ibm.com -n ${CP4BA_INST_NAMESPACE} casdeploy 2> /dev/null 1> /dev/null
+  oc delete casclusters.cas.ibm.com -n ${CP4BA_INST_NAMESPACE} ${CP4BA_INST_CACMS_CAS_CR_NAME} 2> /dev/null 1> /dev/null
 
+if [[ -z "${CP4BA_INST_CACMS_CAS_SECRET_NAME}" ]]; then
+  export CP4BA_INST_CACMS_CAS_SECRET_NAME="icp4a-root-ca"
+fi
+
+# https://www.ibm.com/docs/en/cacms/1.0.x?topic=reference-content-assistant-parameters
 cat <<EOF | oc create -f - 2>/dev/null 1>/dev/null
 apiVersion: cas.ibm.com/v1
 kind: CASCluster
 metadata:
-  name: casdeploy
+  name: ${CP4BA_INST_CACMS_CAS_CR_NAME}
   namespace: ${CP4BA_INST_NAMESPACE}
   labels:
     app.kubernetes.io/instance: ibm-cas
     app.kubernetes.io/managed-by: ibm-cas
     app.kubernetes.io/name: ibm-cas
-    release: 1.0.0
+    release: ${CP4BA_INST_CACMS_CAS_APPVER}
 spec:
-  appVersion: 1.0.0
+  appVersion: ${CP4BA_INST_CACMS_CAS_APPVER}
   license:
     accept: true
   shared_configuration:
     image_pull_secrets:
       - ibm-entitlement-key
-    root_ca_secret: icp4a-root-ca
-    sc_cas_license_type: cp4ba
-    sc_deployment_platform: OCP
-    sc_deployment_profile_size: small
+    root_ca_secret: ${CP4BA_INST_CACMS_CAS_SECRET_NAME}
+    sc_cas_license_type: ${CP4BA_INST_CACMS_CAS_LICENSE_TYPE}
+    sc_deployment_platform: ${CP4BA_INST_CACMS_CAS_DEPLOYMENT_PLATF}
+    sc_deployment_profile_size: ${CP4BA_INST_CACMS_CAS_PROFILE_SIZE}
     sc_image_repository: cp.icr.io
     storage_configuration:
       sc_slow_file_storage_classname: ${CP4BA_INST_SC_FILE}
@@ -201,7 +207,7 @@ waitCACMSClusterReady() {
 
   while true;
   do
-  _CAS_READY=$(oc get casclusters.cas.ibm.com -n ${CP4BA_INST_NAMESPACE} casdeploy -o jsonpath="{.status.conditions}" | jq '.[] | select(.type=="PostDeployCompleted").status' | sed 's/"//g')
+  _CAS_READY=$(oc get casclusters.cas.ibm.com -n ${CP4BA_INST_NAMESPACE} ${CP4BA_INST_CACMS_CAS_CR_NAME} -o jsonpath="{.status.conditions}" | jq '.[] | select(.type=="PostDeployCompleted").status' | sed 's/"//g')
 
     if [[ "${_CAS_READY}" = "True" ]]; then
       break
@@ -214,7 +220,7 @@ waitCACMSClusterReady() {
 
 #-----------------------------------------------------------------
 installCACMSOperator() {
-  log_info "Create CACMS operator using package folder '${_CLR_YELLOW}${CP4BA_INST_CACMS_PACKAGE_FOLDER}${_CLR_GREEN}'"
+  log_info "Create CACMS operator"
 
   #----------------
   oc create -f "${CP4BA_INST_CACMS_PACKAGE_FOLDER}/descriptors/content-assistant/cas_v1_cas_crd.yaml" 2>/dev/null 1>/dev/null
@@ -277,7 +283,7 @@ waitOpenSearchClusterReady() {
 
   while true;
   do
-    _OS_CONDITIONS_AVAILABLE=$(oc get clusters.opensearch.cloudpackopen.ibm.com -n cp4ba-opensearch-prod my-opensearch -o jsonpath="{.status.conditions}" 2>/dev/null | jq '.[] | select(.type=="Available").status' | sed 's/"//g')
+    _OS_CONDITIONS_AVAILABLE=$(oc get clusters.opensearch.cloudpackopen.ibm.com -n ${CP4BA_INST_NAMESPACE} ${CP4BA_INST_OPENSEARCH_CUSTOM_CLUSTER_NAME} -o jsonpath="{.status.conditions}" 2>/dev/null  | jq '.[] | select(.type=="Available").status' | sed 's/"//g')
 
     if [[ "${_OS_CONDITIONS_AVAILABLE}" = "True" ]]; then
       break
@@ -291,7 +297,7 @@ waitOpenSearchClusterReady() {
 
 #-----------------------------------------------------------------
 cacmsRemoveResources() {
-  oc delete casclusters.cas.ibm.com -n ${CP4BA_INST_NAMESPACE} casdeploy 2> /dev/null 1> /dev/null
+  oc delete casclusters.cas.ibm.com -n ${CP4BA_INST_NAMESPACE} ${CP4BA_INST_CACMS_CAS_CR_NAME} 2> /dev/null 1> /dev/null
   oc delete secret -n ${CP4BA_INST_NAMESPACE} "${CP4BA_INST_OPENSEARCH_CUSTOM_CLUSTER_NAME}-vector-db-creds" 2> /dev/null 1> /dev/null
   oc delete secret -n ${CP4BA_INST_NAMESPACE} ibm-content-assistant-secret 2> /dev/null 1> /dev/null
   oc delete secret -n ${CP4BA_INST_NAMESPACE} ibm-content-assistant-admin-key-secret 2> /dev/null 1> /dev/null
@@ -307,20 +313,51 @@ cacmsSetup() {
   waitCACMSClusterReady
 }
 
+downloadOrVerifyPackage() {
+  if [[ ! -z "${CP4BA_INST_CACMS_PACKAGE_DYNAMIC_DOWNLOAD_VER}" ]]; then
+    _OLOC=$(pwd)
+    _TMP_PCKG_FOLDER="${_INST_TMP_FOLDER}/CACMS-$RANDOM"
+    mkdir -p $_TMP_PCKG_FOLDER
+    cd $_TMP_PCKG_FOLDER
+    curl -sk -LO https://github.com/ibm-ecm/ibm-content-assistant-client-managed-software/archive/refs/heads/${CP4BA_INST_CACMS_PACKAGE_DYNAMIC_DOWNLOAD_VER}.zip 2>/dev/null 1>/dev/null 
+
+    unzip ./${CP4BA_INST_CACMS_PACKAGE_DYNAMIC_DOWNLOAD_VER}.zip 2>/dev/null 1>/dev/null 
+
+    _IS_DYNAMIC_PACKAGE=1
+    export CP4BA_INST_CACMS_PACKAGE_FOLDER="${_TMP_PCKG_FOLDER}/ibm-content-assistant-client-managed-software-${CP4BA_INST_CACMS_PACKAGE_DYNAMIC_DOWNLOAD_VER}"
+    rm ./${CP4BA_INST_CACMS_PACKAGE_DYNAMIC_DOWNLOAD_VER}.zip 2>/dev/null 1>/dev/null 
+    cd ${_OLOC}
+  fi
+
+  if [[ ! -d "${CP4BA_INST_CACMS_PACKAGE_FOLDER}" ]]; then
+    log_error "CACMS package installation folder not found"
+    log_warning "Update variable CP4BA_INST_CACMS_PACKAGE_FOLDER or CP4BA_INST_CACMS_PACKAGE_DYNAMIC_DOWNLOAD_VER and restart this tool."  
+    exit 1
+  fi
+
+  log_info "Using CACMS package folder '${_CLR_YELLOW}${CP4BA_INST_CACMS_PACKAGE_FOLDER}${_CLR_GREEN}'"
+
+}
+
+removeDynamicPackage() {
+  if [[ $_IS_DYNAMIC_PACKAGE -eq 1 ]]; then
+    if [[ -d "${CP4BA_INST_CACMS_PACKAGE_FOLDER}" ]]; then
+      log_info "Removing CACMS dynamic package installation folder '${_CLR_YELLOW}${CP4BA_INST_CACMS_PACKAGE_FOLDER}${_CLR_GREEN}'"
+    fi
+  fi
+}
+
 log_msg "=============================================================="
 setTemporaryFolder
 
-if [[ ! -d "${CP4BA_INST_CACMS_PACKAGE_FOLDER}" ]]; then
-  log_error "CACMS package folder not found in ${CP4BA_INST_CACMS_PACKAGE_FOLDER}"
-  log_warning "Update variable CP4BA_INST_CACMS_PACKAGE_FOLDER and restart this tool."  
-  exit 1
-fi
 
 if [[ "${_CMD}" = "install" ]]; then
   if [[ "${CP4BA_INST_CACMS_INSTALL}" = "true" ]]; then
+    downloadOrVerifyPackage
     log_info "${_CLR_GREEN}Creating Content Assistant cluster in '${_CLR_YELLOW}${CP4BA_INST_NAMESPACE}${_CLR_GREEN}' namespace${_CLR_NC}"
     cacmsSetup
     log_info "${_CLR_GREEN}Content Assistant cluster is ready.${_CLR_NC}"
+    removeDynamicPackage
   else
     log_warning "Cannot install Content Assistant, variable CP4BA_INST_CACMS_INSTALL not defined or false."
   fi
