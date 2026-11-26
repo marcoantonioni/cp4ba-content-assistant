@@ -8,6 +8,7 @@ _CFG=""
 _CMD=""
 _FORCE=false
 _IS_DYNAMIC_PACKAGE=0
+_TMP_PCKG_FOLDER=""
 
 #--------------------------------------------------------
 _CLR_RED="\033[0;31m"   #'0;31' is Red's ANSI color code
@@ -341,8 +342,9 @@ downloadOrVerifyPackage() {
 
 removeDynamicPackage() {
   if [[ $_IS_DYNAMIC_PACKAGE -eq 1 ]]; then
-    if [[ -d "${CP4BA_INST_CACMS_PACKAGE_FOLDER}" ]]; then
-      log_info "Removing CACMS dynamic package installation folder '${_CLR_YELLOW}${CP4BA_INST_CACMS_PACKAGE_FOLDER}${_CLR_GREEN}'"
+    if [[ ! -z "${_TMP_PCKG_FOLDER}" && -d "${_TMP_PCKG_FOLDER}" ]]; then
+      log_info "Removing CACMS dynamic package installation folder '${_CLR_YELLOW}${_TMP_PCKG_FOLDER}${_CLR_GREEN}'"
+      rm -fr "${_TMP_PCKG_FOLDER}"
     fi
   fi
 }
