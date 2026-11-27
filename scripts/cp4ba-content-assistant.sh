@@ -302,6 +302,8 @@ cacmsRemoveResources() {
   oc delete secret -n ${CP4BA_INST_NAMESPACE} "${CP4BA_INST_OPENSEARCH_CUSTOM_CLUSTER_NAME}-vector-db-creds" 2> /dev/null 1> /dev/null
   oc delete secret -n ${CP4BA_INST_NAMESPACE} ibm-content-assistant-secret 2> /dev/null 1> /dev/null
   oc delete secret -n ${CP4BA_INST_NAMESPACE} ibm-content-assistant-admin-key-secret 2> /dev/null 1> /dev/null
+  oc delete secret -n ${CP4BA_INST_NAMESPACE} ibm-content-assistant-api-keys-secret 2> /dev/null 1> /dev/null
+  
 }
 
 #-----------------------------------------------------------------
